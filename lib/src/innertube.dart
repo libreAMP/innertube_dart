@@ -22,13 +22,33 @@ class InnerTube {
       : clients = clients ?? defaultClients,
         _http = httpClient ?? http.Client();
 
-  Future<StreamInfo> player(String videoId) async {
+  Future<StreamInfo> player(
+    String videoId, {
+    String? visitorData,
+    String? poToken,
+  }) async {
     Object? lastError;
 
-    for (final client in clients) {
+    // the web client gets first shot when a potoken is around
+    final attempts = <InnerTubeClient>[
+      if (poToken != null) webClient,
+      ...clients,
+    ];
+
+    for (final client in attempts) {
+      final isWeb = client.name == webClient.name;
       try {
-        final response = await _request('player', client, {'videoId': videoId});
-        final info = _parsePlayerResponse(response, videoId, client.name);
+        final body = <String, dynamic>{
+          'videoId': videoId,
+          'contentCheckOk': true,
+          'racyCheckOk': true,
+          if (isWeb && poToken != null)
+            'serviceIntegrityDimensions': {'poToken': poToken},
+        };
+        final response =
+            await _request('player', client, body, visitorData: visitorData);
+        final info = _parsePlayerResponse(response, videoId, client.name,
+            poToken: isWeb ? poToken : null);
         if (info.audioStreams.isNotEmpty || info.videoStreams.isNotEmpty) {
           return info;
         }
@@ -46,14 +66,19 @@ class InnerTube {
   Future<Map<String, dynamic>> _request(
     String endpoint,
     InnerTubeClient client,
-    Map<String, dynamic> body,
-  ) async {
+    Map<String, dynamic> body, {
+    String? visitorData,
+  }) async {
     final uri = Uri.parse('$_baseUrl$endpoint');
+    final context = client.context();
+    if (visitorData != null) {
+      (context['client'] as Map)['visitorData'] = visitorData;
+    }
     final response = await _http.post(
       uri,
       headers: client.headers(),
       body: jsonEncode({
-        'context': client.context(),
+        'context': context,
         ...body,
       }),
     );
@@ -64,11 +89,19 @@ class InnerTube {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  // youtube binds the potoken to the stream url via a pot query param
+  String _withPot(String url, String? poToken) {
+    if (poToken == null) return url;
+    final sep = url.contains('?') ? '&' : '?';
+    return '$url${sep}pot=${Uri.encodeQueryComponent(poToken)}';
+  }
+
   StreamInfo _parsePlayerResponse(
     Map<String, dynamic> response,
     String videoId,
-    String clientName,
-  ) {
+    String clientName, {
+    String? poToken,
+  }) {
     final status = response['playabilityStatus']?['status'];
     if (status != 'OK') {
       final reason = response['playabilityStatus']?['reason'] ?? 'unknown';
@@ -95,7 +128,7 @@ class InnerTube {
       if (format['url'] == null) continue;
 
       final mimeType = format['mimeType'] as String? ?? '';
-      final url = format['url'] as String;
+      final url = _withPot(format['url'] as String, poToken);
       final itag = format['itag'] as int;
       final bitrate = format['bitrate'] as int? ?? 0;
       final contentLength = int.tryParse('${format['contentLength'] ?? ''}');
