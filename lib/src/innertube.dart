@@ -182,6 +182,9 @@ class InnerTube {
       hasMultipleLanguages: languages.length > 1,
       availableLanguages: languages.toList(),
       expiresAt: _expiryOf(audioStreams, videoStreams),
+      loudnessDb: (response['playerConfig']?['audioConfig']?['loudnessDb']
+              as num?)
+          ?.toDouble(),
     );
   }
 
