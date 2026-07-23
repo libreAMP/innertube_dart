@@ -8,12 +8,16 @@ class InnerTubeClient {
   // ios and android_vr refuse to return streams without these
   final Map<String, dynamic> extraContext;
 
+  // the embedded tv client needs thirdParty beside client, not inside it
+  final Map<String, dynamic> rootContext;
+
   const InnerTubeClient({
     required this.name,
     required this.version,
     required this.clientId,
     required this.userAgent,
     this.extraContext = const {},
+    this.rootContext = const {},
   });
 
   Map<String, String> headers() => {
@@ -30,6 +34,7 @@ class InnerTubeClient {
           'clientVersion': version,
           ...extraContext,
         },
+        ...rootContext,
       };
 }
 
@@ -90,6 +95,18 @@ const _android = InnerTubeClient(
   },
 );
 
+// pulls up videos the normal clients call unavailable
+const _tvEmbedded = InnerTubeClient(
+  name: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+  version: '2.0',
+  clientId: 85,
+  userAgent:
+      'Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0 Safari/605.1.15',
+  rootContext: {
+    'thirdParty': {'embedUrl': 'https://www.youtube.com/'},
+  },
+);
+
 // barely worth keeping except when nothing else gets through
 const _androidTestsuite = InnerTubeClient(
   name: 'ANDROID_TESTSUITE',
@@ -108,6 +125,7 @@ const List<InnerTubeClient> defaultClients = [
   _ios,
   _androidMusic,
   _android,
+  _tvEmbedded,
   _androidTestsuite,
 ];
 
