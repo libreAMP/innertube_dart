@@ -40,6 +40,15 @@ class InnerTubeClient {
 
 // TODO refresh client versions at runtime instead of pinning
 
+// the music web client, primary now that the mobile ones are bot-guarded
+const webRemixClient = InnerTubeClient(
+  name: 'WEB_REMIX',
+  version: '1.20250101.01.00',
+  clientId: 67,
+  userAgent:
+      'com.google.music.web/1.20250101.01.00 (Linux; U; Android 12) gzip',
+);
+
 // android_vr still hands back unciphered audio without a potoken
 const _androidVr = InnerTubeClient(
   name: 'ANDROID_VR',

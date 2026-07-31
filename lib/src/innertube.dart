@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'cipher/base_js.dart';
+import 'cipher/signature.dart';
 import 'clients.dart';
 import 'models.dart';
 
@@ -17,6 +19,12 @@ class InnerTube {
 
   final List<InnerTubeClient> clients;
   final http.Client _http;
+  late final BaseJs _baseJs = BaseJs(_http);
+  late final SigCipherCache _cipher = SigCipherCache(_baseJs);
+  int? _sts;
+
+  // clients that speak the web dialect, they want a potoken + sts and hand back ciphered urls
+  static const _webFamily = {'WEB', 'WEB_REMIX'};
 
   InnerTube({List<InnerTubeClient>? clients, http.Client? httpClient})
       : clients = clients ?? defaultClients,
@@ -27,16 +35,21 @@ class InnerTube {
     String? visitorData,
     String? poToken,
   }) async {
+    // warm the player js + cipher first so sts and the decipher pipeline are ready; a miss just skips ciphered urls
+    await _baseJs.get(videoId: videoId);
+    _sts ??= _baseJs.extractSts();
+
     Object? lastError;
 
-    // the web client gets first shot when a potoken is around
+    // web remix leads when a potoken is around, the mobile ones are bot-guarded now
     final attempts = <InnerTubeClient>[
+      if (poToken != null) webRemixClient,
       if (poToken != null) webClient,
       ...clients,
     ];
 
     for (final client in attempts) {
-      final isWeb = client.name == webClient.name;
+      final isWeb = _webFamily.contains(client.name);
       try {
         final body = <String, dynamic>{
           'videoId': videoId,
@@ -44,6 +57,10 @@ class InnerTube {
           'racyCheckOk': true,
           if (isWeb && poToken != null)
             'serviceIntegrityDimensions': {'poToken': poToken},
+          if (isWeb && _sts != null)
+            'playbackContext': {
+              'contentPlaybackContext': {'signatureTimestamp': _sts},
+            },
         };
         final response =
             await _request('player', client, body, visitorData: visitorData);
@@ -122,13 +139,19 @@ class InnerTube {
     final audioStreams = <AudioStream>[];
     final languages = <String>{};
 
+    final dec = _cipher.get();
+
     for (final format in formats) {
       if (format is! Map) continue;
-      // ciphered formats have no direct url, skip them
-      if (format['url'] == null) continue;
 
+      // ciphered formats come as signatureCipher instead of a direct url, decipher and rebind
+      final signatureCipher = format['signatureCipher'] as String?;
+      final directUrl = format['url'] as String?;
+      final url = decipherUrl(signatureCipher, directUrl, dec);
+      if (url == null) continue;
+
+      final potUrl = _withPot(url, poToken);
       final mimeType = format['mimeType'] as String? ?? '';
-      final url = _withPot(format['url'] as String, poToken);
       final itag = format['itag'] as int;
       final bitrate = format['bitrate'] as int? ?? 0;
       final contentLength = int.tryParse('${format['contentLength'] ?? ''}');
@@ -136,7 +159,7 @@ class InnerTube {
       if (mimeType.startsWith('video/')) {
         if (format['width'] != null && format['height'] != null) {
           videoStreams.add(VideoStream(
-            url: url,
+            url: potUrl,
             itag: itag,
             mimeType: mimeType,
             bitrate: bitrate,
@@ -159,7 +182,7 @@ class InnerTube {
         }
 
         audioStreams.add(AudioStream(
-          url: url,
+          url: potUrl,
           itag: itag,
           mimeType: mimeType,
           bitrate: bitrate,
