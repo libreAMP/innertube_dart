@@ -1,15 +1,12 @@
-// youtube returns different formats depending on which client asks
 class InnerTubeClient {
   final String name;
   final String version;
   final int clientId;
   final String userAgent;
-
-  // ios and android_vr refuse to return streams without these
   final Map<String, dynamic> extraContext;
-
-  // the embedded tv client needs thirdParty beside client, not inside it
   final Map<String, dynamic> rootContext;
+  final String origin;
+  final String referer;
 
   const InnerTubeClient({
     required this.name,
@@ -18,6 +15,8 @@ class InnerTubeClient {
     required this.userAgent,
     this.extraContext = const {},
     this.rootContext = const {},
+    this.origin = 'https://music.youtube.com',
+    this.referer = 'https://music.youtube.com/',
   });
 
   Map<String, String> headers() => {
@@ -26,6 +25,14 @@ class InnerTubeClient {
         'X-YouTube-Client-Version': version,
         'User-Agent': userAgent,
         'Content-Type': 'application/json',
+        'Origin': origin,
+        'Referer': referer,
+      };
+
+  bool get needsPoToken => switch (name) {
+        'TVHTML5_SIMPLY' => true,
+        'TVHTML5_SIMPLY_EMBEDDED_PLAYER' => true,
+        _ => false,
       };
 
   Map<String, dynamic> context() => {
@@ -38,24 +45,22 @@ class InnerTubeClient {
       };
 }
 
-// TODO refresh client versions at runtime instead of pinning
-
-// the music web client, primary now that the mobile ones are bot-guarded
-const webRemixClient = InnerTubeClient(
+const _webRemix = InnerTubeClient(
   name: 'WEB_REMIX',
-  version: '1.20250101.01.00',
+  version: '1.20260707.12.00',
   clientId: 67,
   userAgent:
-      'com.google.music.web/1.20250101.01.00 (Linux; U; Android 12) gzip',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0',
+  origin: 'https://music.youtube.com',
+  referer: 'https://music.youtube.com/',
 );
 
-// android_vr still hands back unciphered audio without a potoken
 const _androidVr = InnerTubeClient(
   name: 'ANDROID_VR',
-  version: '1.60.19',
+  version: '1.65.10',
   clientId: 28,
   userAgent:
-      'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; Quest 3) gzip',
+      'com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; Quest 3) gzip',
   extraContext: {
     'deviceMake': 'Oculus',
     'deviceModel': 'Quest 3',
@@ -63,48 +68,72 @@ const _androidVr = InnerTubeClient(
     'osName': 'Android',
     'osVersion': '12L',
   },
+  origin: 'https://www.youtube.com',
+  referer: 'https://www.youtube.com/',
 );
 
 const _ios = InnerTubeClient(
   name: 'IOS',
-  version: '19.29.1',
+  version: '21.26.4',
   clientId: 5,
   userAgent:
-      'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)',
+      'com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)',
   extraContext: {
     'deviceMake': 'Apple',
     'deviceModel': 'iPhone16,2',
     'osName': 'iPhone',
     'osVersion': '17.5.1.21F90',
   },
+  origin: 'https://www.youtube.com',
+  referer: 'https://www.youtube.com/',
 );
 
 const _androidMusic = InnerTubeClient(
   name: 'ANDROID_MUSIC',
-  version: '6.42.52',
+  version: '7.27.52',
   clientId: 21,
   userAgent:
-      'com.google.android.apps.youtube.music/6.42.52 (Linux; U; Android 12) gzip',
+      'com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 12) gzip',
   extraContext: {
     'androidSdkVersion': 31,
     'osName': 'Android',
     'osVersion': '12',
   },
+  origin: 'https://music.youtube.com',
+  referer: 'https://music.youtube.com/',
 );
 
 const _android = InnerTubeClient(
   name: 'ANDROID',
-  version: '19.44.38',
+  version: '21.26.364',
   clientId: 3,
-  userAgent: 'com.google.android.youtube/19.44.38 (Linux; U; Android 12) gzip',
+  userAgent:
+      'com.google.android.youtube/21.26.364 (Linux; U; Android 12) gzip',
   extraContext: {
     'androidSdkVersion': 31,
     'osName': 'Android',
     'osVersion': '12',
   },
+  origin: 'https://www.youtube.com',
+  referer: 'https://www.youtube.com/',
 );
 
-// pulls up videos the normal clients call unavailable
+const _visionOs = InnerTubeClient(
+  name: 'VISIONOS',
+  version: '0.1',
+  clientId: 101,
+  userAgent:
+      'com.google.ios.youtube/21.26.4 (AppleVisionPro; U; CPU visionOS 2_0 like Mac OS X)',
+  extraContext: {
+    'deviceMake': 'Apple',
+    'deviceModel': 'AppleVisionPro',
+    'osName': 'visionOS',
+    'osVersion': '2.0',
+  },
+  origin: 'https://www.youtube.com',
+  referer: 'https://www.youtube.com/',
+);
+
 const _tvEmbedded = InnerTubeClient(
   name: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
   version: '2.0',
@@ -114,9 +143,24 @@ const _tvEmbedded = InnerTubeClient(
   rootContext: {
     'thirdParty': {'embedUrl': 'https://www.youtube.com/'},
   },
+  origin: 'https://www.youtube.com',
+  referer: 'https://www.youtube.com/',
 );
 
-// barely worth keeping except when nothing else gets through
+const _tvHtml5Simply = InnerTubeClient(
+  name: 'TVHTML5_SIMPLY',
+  version: '1.0',
+  clientId: 75,
+  userAgent:
+      'Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0 Safari/605.1.15',
+  extraContext: {
+    'osName': 'PlayStation',
+    'osVersion': '12.00',
+  },
+  origin: 'https://www.youtube.com',
+  referer: 'https://www.youtube.com/',
+);
+
 const _androidTestsuite = InnerTubeClient(
   name: 'ANDROID_TESTSUITE',
   version: '1.9',
@@ -127,6 +171,8 @@ const _androidTestsuite = InnerTubeClient(
     'osName': 'Android',
     'osVersion': '12',
   },
+  origin: 'https://www.youtube.com',
+  referer: 'https://www.youtube.com/',
 );
 
 const List<InnerTubeClient> defaultClients = [
@@ -134,14 +180,20 @@ const List<InnerTubeClient> defaultClients = [
   _ios,
   _androidMusic,
   _android,
+  _visionOs,
   _tvEmbedded,
+  _tvHtml5Simply,
   _androidTestsuite,
 ];
 
 const webClient = InnerTubeClient(
   name: 'WEB',
-  version: '2.20240726.00.00',
+  version: '2.20260708.00.00',
   clientId: 1,
   userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+  origin: 'https://www.youtube.com',
+  referer: 'https://www.youtube.com/',
 );
+
+const webRemixClient = _webRemix;

@@ -2,8 +2,6 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-import 'cipher/base_js.dart';
-import 'cipher/signature.dart';
 import 'clients.dart';
 import 'models.dart';
 
@@ -19,12 +17,8 @@ class InnerTube {
 
   final List<InnerTubeClient> clients;
   final http.Client _http;
-  late final BaseJs _baseJs = BaseJs(_http);
-  late final SigCipherCache _cipher = SigCipherCache(_baseJs);
-  int? _sts;
-
-  // clients that speak the web dialect, they want a potoken + sts and hand back ciphered urls
-  static const _webFamily = {'WEB', 'WEB_REMIX'};
+  int? _signatureTimestamp;
+  final Set<String> _deadClients = {};
 
   InnerTube({List<InnerTubeClient>? clients, http.Client? httpClient})
       : clients = clients ?? defaultClients,
@@ -34,38 +28,40 @@ class InnerTube {
     String videoId, {
     String? visitorData,
     String? poToken,
+    String? gvsPoToken,
   }) async {
-    // warm the player js + cipher first so sts and the decipher pipeline are ready; a miss just skips ciphered urls
-    await _baseJs.get(videoId: videoId);
-    _sts ??= _baseJs.extractSts();
-
     Object? lastError;
 
-    // web remix leads when a potoken is around, the mobile ones are bot-guarded now
+    final ts = _signatureTimestamp ?? await _fetchSignatureTimestamp();
+
     final attempts = <InnerTubeClient>[
-      if (poToken != null) webRemixClient,
+      webRemixClient,
       if (poToken != null) webClient,
       ...clients,
     ];
 
     for (final client in attempts) {
-      final isWeb = _webFamily.contains(client.name);
+      if (_deadClients.contains(client.name)) continue;
+      final isWeb = client.name == webClient.name;
       try {
         final body = <String, dynamic>{
           'videoId': videoId,
           'contentCheckOk': true,
           'racyCheckOk': true,
+          if (ts != null)
+            'playbackContext': {
+              'contentPlaybackContext': {
+                'signatureTimestamp': ts,
+              },
+            },
           if (isWeb && poToken != null)
             'serviceIntegrityDimensions': {'poToken': poToken},
-          if (isWeb && _sts != null)
-            'playbackContext': {
-              'contentPlaybackContext': {'signatureTimestamp': _sts},
-            },
         };
+
         final response =
             await _request('player', client, body, visitorData: visitorData);
         final info = _parsePlayerResponse(response, videoId, client.name,
-            poToken: isWeb ? poToken : null);
+            poToken: isWeb ? poToken : null, gvsPoToken: gvsPoToken);
         if (info.audioStreams.isNotEmpty || info.videoStreams.isNotEmpty) {
           return info;
         }
@@ -80,6 +76,27 @@ class InnerTube {
     );
   }
 
+  Future<int?> _fetchSignatureTimestamp() async {
+    try {
+      final r = await _http.get(
+        Uri.parse(
+            'https://www.youtube.com/player_api?hl=en'),
+        headers: {
+          'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      );
+      if (r.statusCode != 200) return null;
+      final match = RegExp(r'signatureTimestamp[:\s]+(\d+)').firstMatch(r.body);
+      if (match == null) return null;
+      final ts = int.tryParse(match.group(1)!);
+      if (ts != null) _signatureTimestamp = ts;
+      return ts;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<Map<String, dynamic>> _request(
     String endpoint,
     InnerTubeClient client,
@@ -91,9 +108,13 @@ class InnerTube {
     if (visitorData != null) {
       (context['client'] as Map)['visitorData'] = visitorData;
     }
+    final headers = client.headers();
+    if (visitorData != null) {
+      headers['X-Goog-Visitor-Id'] = visitorData;
+    }
     final response = await _http.post(
       uri,
-      headers: client.headers(),
+      headers: headers,
       body: jsonEncode({
         'context': context,
         ...body,
@@ -101,16 +122,42 @@ class InnerTube {
     );
 
     if (response.statusCode >= 400) {
+      _deadClients.add(client.name);
       throw InnerTubeException('HTTP ${response.statusCode} from ${client.name}');
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
-  // youtube binds the potoken to the stream url via a pot query param
   String _withPot(String url, String? poToken) {
     if (poToken == null) return url;
+    if (url.contains('pot=')) return url;
     final sep = url.contains('?') ? '&' : '?';
     return '$url${sep}pot=${Uri.encodeQueryComponent(poToken)}';
+  }
+
+  // cipher urls sometimes need the sig appended
+  String? _urlFromCipher(Map format) {
+    final cipher = (format['cipher'] as String?) ??
+        (format['signatureCipher'] as String?);
+    if (cipher == null) return null;
+    var url = '';
+    String? sig;
+    String? sp;
+    for (final part in cipher.split('&')) {
+      if (part.startsWith('url=')) {
+        url = Uri.decodeQueryComponent(part.substring(4));
+      } else if (part.startsWith('s=')) {
+        sig = Uri.decodeQueryComponent(part.substring(2));
+      } else if (part.startsWith('sp=')) {
+        sp = Uri.decodeQueryComponent(part.substring(3));
+      }
+    }
+    if (url.isEmpty) return null;
+    if (sig != null && sp != null && !url.contains('$sp=')) {
+      final sep = url.contains('?') ? '&' : '?';
+      url = '$url$sep$sp=$sig';
+    }
+    return url;
   }
 
   StreamInfo _parsePlayerResponse(
@@ -118,15 +165,18 @@ class InnerTube {
     String videoId,
     String clientName, {
     String? poToken,
+    String? gvsPoToken,
   }) {
     final status = response['playabilityStatus']?['status'];
     if (status != 'OK') {
       final reason = response['playabilityStatus']?['reason'] ?? 'unknown';
+      _deadClients.add(clientName);
       throw InnerTubeException('not playable ($status: $reason)');
     }
 
     final streamingData = response['streamingData'];
     if (streamingData == null) {
+      _deadClients.add(clientName);
       throw InnerTubeException('no streamingData');
     }
 
@@ -139,27 +189,26 @@ class InnerTube {
     final audioStreams = <AudioStream>[];
     final languages = <String>{};
 
-    final dec = _cipher.get();
-
     for (final format in formats) {
       if (format is! Map) continue;
+      var url = format['url'] as String?;
+      if (url == null) {
+        url = _urlFromCipher(format);
+        if (url == null) continue;
+      }
 
-      // ciphered formats come as signatureCipher instead of a direct url, decipher and rebind
-      final signatureCipher = format['signatureCipher'] as String?;
-      final directUrl = format['url'] as String?;
-      final url = decipherUrl(signatureCipher, directUrl, dec);
-      if (url == null) continue;
-
-      final potUrl = _withPot(url, poToken);
       final mimeType = format['mimeType'] as String? ?? '';
       final itag = format['itag'] as int;
       final bitrate = format['bitrate'] as int? ?? 0;
       final contentLength = int.tryParse('${format['contentLength'] ?? ''}');
 
+      // gvs potoken goes on every stream url
+      url = _withPot(url, gvsPoToken ?? poToken);
+
       if (mimeType.startsWith('video/')) {
         if (format['width'] != null && format['height'] != null) {
           videoStreams.add(VideoStream(
-            url: potUrl,
+            url: url,
             itag: itag,
             mimeType: mimeType,
             bitrate: bitrate,
@@ -182,11 +231,12 @@ class InnerTube {
         }
 
         audioStreams.add(AudioStream(
-          url: potUrl,
+          url: url,
           itag: itag,
           mimeType: mimeType,
           bitrate: bitrate,
-          audioSampleRate: int.tryParse('${format['audioSampleRate'] ?? ''}') ?? 0,
+          audioSampleRate:
+              int.tryParse('${format['audioSampleRate'] ?? ''}') ?? 0,
           audioChannels: format['audioChannels'] ?? 2,
           language: lang,
           languageDisplayName: langName,
@@ -194,6 +244,10 @@ class InnerTube {
           contentLength: contentLength,
         ));
       }
+    }
+
+    if (audioStreams.isEmpty && videoStreams.isEmpty) {
+      _deadClients.add(clientName);
     }
 
     return StreamInfo(
@@ -211,7 +265,6 @@ class InnerTube {
     );
   }
 
-  // urls carry an expire param in unix seconds
   DateTime? _expiryOf(List<AudioStream> audio, List<VideoStream> video) {
     final url = audio.isNotEmpty
         ? audio.first.url
@@ -223,5 +276,6 @@ class InnerTube {
     return DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
   }
 
+  void resetDeadClients() => _deadClients.clear();
   void close() => _http.close();
 }
