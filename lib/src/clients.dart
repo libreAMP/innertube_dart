@@ -7,6 +7,7 @@ class InnerTubeClient {
   final Map<String, dynamic> rootContext;
   final String origin;
   final String referer;
+  final bool useMusicPlayerEndpoint;
 
   const InnerTubeClient({
     required this.name,
@@ -17,6 +18,7 @@ class InnerTubeClient {
     this.rootContext = const {},
     this.origin = 'https://music.youtube.com',
     this.referer = 'https://music.youtube.com/',
+    this.useMusicPlayerEndpoint = false,
   });
 
   Map<String, String> headers() => {
@@ -123,15 +125,16 @@ const _visionOs = InnerTubeClient(
   version: '0.1',
   clientId: 101,
   userAgent:
-      'com.google.ios.youtube/21.26.4 (AppleVisionPro; U; CPU visionOS 2_0 like Mac OS X)',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15',
   extraContext: {
     'deviceMake': 'Apple',
-    'deviceModel': 'AppleVisionPro',
-    'osName': 'visionOS',
-    'osVersion': '2.0',
+    'deviceModel': 'RealityDevice14,1',
+    'osName': 'VISION_OS',
+    'osVersion': '1.3',
   },
   origin: 'https://www.youtube.com',
   referer: 'https://www.youtube.com/',
+  useMusicPlayerEndpoint: true,
 );
 
 const _tvEmbedded = InnerTubeClient(
@@ -176,11 +179,11 @@ const _androidTestsuite = InnerTubeClient(
 );
 
 const List<InnerTubeClient> defaultClients = [
+  _visionOs,
   _androidVr,
   _ios,
   _androidMusic,
   _android,
-  _visionOs,
   _tvEmbedded,
   _tvHtml5Simply,
   _androidTestsuite,

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -42,7 +43,7 @@ class InnerTube {
 
     for (final client in attempts) {
       if (_deadClients.contains(client.name)) continue;
-      final isWeb = client.name == webClient.name;
+      final isWeb = _isWebClient(client.name);
       try {
         final body = <String, dynamic>{
           'videoId': videoId,
@@ -61,7 +62,8 @@ class InnerTube {
         final response =
             await _request('player', client, body, visitorData: visitorData);
         final info = _parsePlayerResponse(response, videoId, client.name,
-            poToken: isWeb ? poToken : null, gvsPoToken: gvsPoToken);
+            poToken: isWeb ? poToken : null,
+            gvsPoToken: isWeb ? gvsPoToken : null);
         if (info.audioStreams.isNotEmpty || info.videoStreams.isNotEmpty) {
           return info;
         }
@@ -103,7 +105,10 @@ class InnerTube {
     Map<String, dynamic> body, {
     String? visitorData,
   }) async {
-    final uri = Uri.parse('$_baseUrl$endpoint');
+    final baseUrl = client.useMusicPlayerEndpoint
+        ? 'https://music.youtube.com/youtubei/v1/'
+        : _baseUrl;
+    final uri = Uri.parse('$baseUrl$endpoint');
     final context = client.context();
     if (visitorData != null) {
       (context['client'] as Map)['visitorData'] = visitorData;
@@ -119,7 +124,7 @@ class InnerTube {
         'context': context,
         ...body,
       }),
-    );
+    ).timeout(const Duration(seconds: 10));
 
     if (response.statusCode >= 400) {
       _deadClients.add(client.name);
@@ -135,7 +140,12 @@ class InnerTube {
     return '$url${sep}pot=${Uri.encodeQueryComponent(poToken)}';
   }
 
-  // cipher urls sometimes need the sig appended
+  bool _isWebClient(String name) =>
+      name == 'WEB' ||
+      name == 'WEB_REMIX' ||
+      name == 'MWEB' ||
+      name == 'WEB_CREATOR';
+
   String? _urlFromCipher(Map format) {
     final cipher = (format['cipher'] as String?) ??
         (format['signatureCipher'] as String?);
@@ -202,7 +212,6 @@ class InnerTube {
       final bitrate = format['bitrate'] as int? ?? 0;
       final contentLength = int.tryParse('${format['contentLength'] ?? ''}');
 
-      // gvs potoken goes on every stream url
       url = _withPot(url, gvsPoToken ?? poToken);
 
       if (mimeType.startsWith('video/')) {
