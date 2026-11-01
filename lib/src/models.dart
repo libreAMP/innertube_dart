@@ -14,6 +14,7 @@ class StreamInfo {
 
   // how far off youtube's reference loudness this track sits
   final double? loudnessDb;
+  final Duration? duration;
 
   StreamInfo({
     required this.videoStreams,
@@ -25,6 +26,7 @@ class StreamInfo {
     this.client,
     this.expiresAt,
     this.loudnessDb,
+    this.duration,
   });
 
   bool get isExpired => expiresAt != null && DateTime.now().isAfter(expiresAt!);

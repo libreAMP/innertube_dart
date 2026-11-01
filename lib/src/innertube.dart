@@ -259,6 +259,9 @@ class InnerTube {
       _deadClients.add(clientName);
     }
 
+    final seconds =
+        int.tryParse('${response['videoDetails']?['lengthSeconds'] ?? ''}');
+
     return StreamInfo(
       videoId: videoId,
       client: clientName,
@@ -271,6 +274,8 @@ class InnerTube {
       loudnessDb: (response['playerConfig']?['audioConfig']?['loudnessDb']
               as num?)
           ?.toDouble(),
+      duration:
+          seconds != null && seconds > 0 ? Duration(seconds: seconds) : null,
     );
   }
 
